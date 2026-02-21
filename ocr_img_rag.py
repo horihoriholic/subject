@@ -5,14 +5,18 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter #テキス�
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI #テキストをベクトルに変換
 from langchain_community.vectorstores import Chroma #ベクトル検索を行うライブラリ
 from langchain_classic.chains import RetrievalQA #検索した情報を元にLLMで回答を生成
-from langchain_community.document_loaders import UnstructuredPDFLoader
+from langchain_community.document_loaders import UnstructuredImageLoader
 load_dotenv()
 
-pdf_path = sys.argv[1] #PDFファイルパスをコマンドライン引数から取得
+img_path = sys.argv[1] #画像ファイルパスをコマンドライン引数から取得
 
-# PDF読み込み
+# 画像読み込み
 # loader = PyPDFLoader(pdf_path)
-loader = UnstructuredPDFLoader(pdf_path, strategy="ocr_only")
+loader = UnstructuredImageLoader(
+    img_path,
+    strategy="hi_res",  # 高精度モード（必須に近い）
+    languages=["jpn"]    # 日本語を指定)
+)
 pages = loader.load()
 
 # print(f"読み込んだページ数: {len(pages)}")
