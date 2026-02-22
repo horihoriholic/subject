@@ -1,12 +1,7 @@
-import streamlit as st
-import streamlit_authenticator as stauth
-import streamlit.components.v1 as components
-import chromadb
-import base64
-import os
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import Chroma
-from langchain_classic.chains import RetrievalQA
-from langchain_classic.prompts import PromptTemplate
-from openai import OpenAI
-from langchain_classic.schema import Document
+streamlit
+streamlit-authenticator
+chromadb
+langchain-openai
+langchain-community
+langchain-classic
+openai
