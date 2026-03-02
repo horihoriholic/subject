@@ -1,0 +1,4 @@
+.streamlit/secrets.toml
+data/
+unused/
+chroma_db/

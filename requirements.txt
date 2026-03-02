@@ -1,0 +1,8 @@
+streamlit
+streamlit-authenticator
+langchain-openai
+langchain-classic
+openai
+langchain-core
+langchain-pinecone
+pinecone
