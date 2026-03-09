@@ -11,26 +11,6 @@ from langchain_core.output_parsers import StrOutputParser
 import json
 import re
 from PIL import Image, ImageOps
-from supabase import create_client, Client
-import requests
-from io import BytesIO
-
-# Pinecone設定（secrets優先、無ければ環境変数）
-# - PINECONE_API_KEY
-# - PINECONE_INDEX_NAME
-# - PINECONE_NAMESPACE (任意)
-PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY", os.getenv("PINECONE_API_KEY"))
-PINECONE_INDEX_NAME = st.secrets.get("PINECONE_INDEX_NAME", os.getenv("PINECONE_INDEX_NAME"))
-PINECONE_NAMESPACE = st.secrets.get("PINECONE_NAMESPACE", os.getenv("PINECONE_NAMESPACE", "multimodal"))
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL"))
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY"))
-BOOK_MASTER = {
-    "AEAJ認定アロマテラピーインストラクター公式テキスト": "book_001",
-    "ENCYCLOPEDIA_OF_ESSENTIAL_OILS": "book_002",
-    "アロマテラピーを学ぶためのやさしい精油化学": "book_003",
-    "ビジュアルガイド_精油の化学_イラストで学ぶエッセンシャルオイルのサイエンス": "book_004",
-    "ビジュアルガイド_精油の化学2_日本の精油と世界の精油": "book_005"
-}
 
 # JSONファイルを読み込む関数
 @st.cache_data  # 毎回ファイルを読み込まないようにキャッシュする
@@ -44,34 +24,13 @@ def load_fixed_image(path):
     img = ImageOps.exif_transpose(img) # 回転情報を物理的に反映
     return img
 
-def get_img_url(path):
-    parts = path.replace("\\", "/").split("/")
-    # 本の名前が和名だと、SUPABASEのbucketに入らなかったので、取得時のみ変換
-    book_name = parts[-2]
-    # 日本語の本の名前をIDに変換（マスタにない場合はそのまま使用）
-    book_id = BOOK_MASTER.get(book_name, book_name)
-    path_of_bucket = path.replace(book_name, book_id)
-    bucket = "python-subject"
-    return f"{SUPABASE_URL}/storage/v1/object/public/{bucket}/{path_of_bucket}"
-
-def load_fixed_image_from_url(url):
-    try:
-        # 1. 画像データを取得（ここで1回だけアクセス）
-        response = requests.get(url, timeout=10)
-        
-        # 2. ステータスコードが200（成功）かチェック
-        if response.status_code == 200:
-            # 3. メモリ上で展開して画像を開く
-            img = Image.open(BytesIO(response.content))
-            # 4. 向きの補正を実行
-            return ImageOps.exif_transpose(img)
-        else:
-            return None
-            
-    except Exception as e:
-        # ネットワークエラーなどの例外処理
-        st.error(f"画像取得中にエラーが発生しました: {e}")
-        return None
+# Pinecone設定（secrets優先、無ければ環境変数）
+# - PINECONE_API_KEY
+# - PINECONE_INDEX_NAME
+# - PINECONE_NAMESPACE (任意)
+PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY", os.getenv("PINECONE_API_KEY"))
+PINECONE_INDEX_NAME = st.secrets.get("PINECONE_INDEX_NAME", os.getenv("PINECONE_INDEX_NAME"))
+PINECONE_NAMESPACE = st.secrets.get("PINECONE_NAMESPACE", os.getenv("PINECONE_NAMESPACE", "multimodal"))
 
 config = st.secrets.to_dict()
 # cookie の設定も手動で組み立てる
@@ -431,14 +390,10 @@ if st.session_state["authentication_status"]:
                                 # 2. 画像パスの組み立てと表示
                                 book = item.get("book")
                                 source = item.get("source")
-                                path = get_img_url(f"data/{book}/{source}") 
+                                path = f"./data/{book}/{source}"
                                 # 重複を避けて保存
-                                if not any(img['path'] == path for img in answer_image_paths):
-                                    answer_image_paths.append({
-                                        "path": path,
-                                        "book": book,
-                                        "source": source
-                                    })
+                                if path not in answer_image_paths:
+                                    answer_image_paths.append(path)
                             # 最終的な回答文（出典情報を除いたもの）
                             clean_answer = "".join(answer_lines)
                             st.session_state.result_btn4 = clean_answer
@@ -455,18 +410,15 @@ if st.session_state["authentication_status"]:
                 if st.session_state.answer_image_paths:
                     # 1行に3枚並べる（1枚あたりのサイズが小さくなります）
                     cols = st.columns(3)
-                    for i, img_info in enumerate(st.session_state.answer_image_paths):
-                        img_path = img_info["path"]
-                        book_name = img_info["book"]
-                        source_name = img_info["source"]
+                    for i, img_path in enumerate(st.session_state.answer_image_paths):
                         with cols[i % 3]:
-                            fixed_img = load_fixed_image_from_url(img_path) # SUPABASEの場合
-                            if fixed_img:
-                                custom_caption = f"【参考文献】{book_name} / {source_name}" # 直近2つを取得
+                            if os.path.exists(img_path):
+                                parts = img_path.split("/") # Pathを/区切りで分割
+                                custom_caption = "【参考文献】"+"[".join(parts[-2:])+"]" # 直近2つを取得
                                 # そのまま画像を表示させるとスキャン時のEXIF情報（回転情報）に依存するので制御する。
-                                st.image(fixed_img, caption=custom_caption, width="stretch")
+                                st.image(load_fixed_image(img_path), caption=custom_caption, width="stretch")
                             else:
-                                st.warning(f"画像ファイルが見つかりません: \n\n {book_name} / {source_name}")
+                                st.warning(f"画像ファイルが見つかりません: {img_path}")
 
 
 elif st.session_state.get("authentication_status") is False:

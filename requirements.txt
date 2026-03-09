@@ -6,3 +6,4 @@ openai
 langchain-core
 langchain-pinecone
 pinecone
+supabase
