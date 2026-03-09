@@ -9,6 +9,20 @@ from langchain_classic.prompts import PromptTemplate
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 import json
+import re
+from PIL import Image, ImageOps
+
+# JSONファイルを読み込む関数
+@st.cache_data  # 毎回ファイルを読み込まないようにキャッシュする
+def load_options():
+    with open("master_data.json", "r", encoding="utf-8") as f:
+        return json.load(f)
+
+# 画像を開いてEXIFに基づいて回転を補正する関数
+def load_fixed_image(path):
+    img = Image.open(path)
+    img = ImageOps.exif_transpose(img) # 回転情報を物理的に反映
+    return img
 
 # Pinecone設定（secrets優先、無ければ環境変数）
 # - PINECONE_API_KEY
@@ -62,6 +76,8 @@ if st.session_state["authentication_status"]:
         st.session_state.result_btn3 = ""
     if "result_btn4" not in st.session_state:
         st.session_state.result_btn4 = ""
+    if "answer_image_paths" not in st.session_state:
+        st.session_state.answer_image_paths = []
 
     st.title("精油成分サーチRAG")
     col_left, col_right = st.columns(2)
@@ -175,41 +191,6 @@ if st.session_state["authentication_status"]:
             st.subheader("該当成分を含む精油を書籍から探す")
             st.caption("書籍の中から探す")
 
-            # 1. 独自の命令書（プロンプト）を作成
-            template = """
-            あなたは精油の専門家です。以下の【提供された資料】のみを使用して、質問に答えてください。
-            資料に数値（％など）がある場合は、その数値を必ず「数値として」読み取り、比較してランキングを作成してください。
-            資料にない情報は「資料にはありません」と答え、自分の知識で補完しないでください。
-
-            【手順】
-            1. 各資料の冒頭にある「【出典情報】」から、book名とsource名を正確に読み取ってください。
-            2. その直後の「内容:」から、指定成分を含む精油名、その含有量（%の数値）、および引用元情報をすべて抽出してください。
-            3. パーセンテージが範囲（例：30-40%）で記載されている場合は、その中間値または代表的な数値を1つの数値(float)として抽出してください。
-            4. 資料に存在しない精油や自分の知識による補完は、一般常識であっても絶対に回答に含めないでください。
-            5. 出力は必ず以下のJSON形式のみとし、説明文や「資料にはありません」というテキストも一切含めないでください。
-            6. 資料に数値（％）の記載がない精油は、抽出対象から除外してください。
-            7. 資料に該当する精油が一つも存在しない場合、または指定された成分に関する記述がない場合は、何も書かずに必ず空のリスト `[]` のみを出力してください。
-
-            【出力フォーマット】
-            [
-            {{
-                "name": "精油名（産地など）",
-                "value": 数値のみ(float),
-                "display_value": "XX.X%",
-                "book": "読み取ったbook名",
-                "source": "読み取ったsource名"
-            }}
-            ]
-            ※該当なしの場合は `[]` を出力。
-
-            【提供された資料】:
-            {context}
-
-            質問: {question}
-            回答:
-            """
-
-            PROMPT = PromptTemplate(template=template, input_variables=["context", "question"])
             col1, col2 = st.columns([0.8, 0.2])
             with col1:
                 question = st.text_input(
@@ -220,16 +201,45 @@ if st.session_state["authentication_status"]:
             with col2:
                 executed_btn_3 = st.button("検索", key="btn_3", use_container_width=True)
             if executed_btn_3 and question:
+                # 1. 独自の命令書（プロンプト）を作成
+                template = """
+                あなたは精油の専門家です。以下の【提供された資料】のみを使用して、質問に答えてください。
+                資料に数値（％など）がある場合は、その数値を必ず「数値として」読み取り、比較してランキングを作成してください。
+                資料にない情報は「資料にはありません」と答え、自分の知識で補完しないでください。
+
+                【手順】
+                1. 各資料の冒頭にある「【出典情報】」から、book名とsource名を正確に読み取ってください。
+                2. その直後の「内容:」から、指定成分を含む精油名、その含有量（%の数値）、および引用元情報をすべて抽出してください。
+                3. パーセンテージが範囲（例：30-40%）で記載されている場合は、その中間値または代表的な数値を1つの数値(float)として抽出してください。
+                4. 資料に存在しない精油や自分の知識による補完は、一般常識であっても絶対に回答に含めないでください。
+                5. 出力は必ず以下のJSON形式のみとし、説明文や「資料にはありません」というテキストも一切含めないでください。
+                6. 資料に数値（％）の記載がない精油は、抽出対象から除外してください。
+                7. 資料に該当する精油が一つも存在しない場合、または指定された成分に関する記述がない場合は、何も書かずに必ず空のリスト `[]` のみを出力してください。
+
+                【出力フォーマット】
+                [
+                {{
+                    "name": "精油名（産地など）",
+                    "value": 数値のみ(float),
+                    "display_value": "XX.X%",
+                    "book": "読み取ったbook名",
+                    "source": "読み取ったsource名"
+                }}
+                ]
+                ※該当なしの場合は `[]` を出力。
+
+                【提供された資料】:
+                {context}
+
+                質問: {question}
+                回答:
+                """
+
+                PROMPT = PromptTemplate(template=template, input_variables=["context", "question"])
                 # 1. DBと条件を指定
                 retriever=vectorstore.as_retriever(search_kwargs={"k": 20})
                 # 2. DBに対してquestionに沿った検索を実行し、内容が似ている情報を指定数分取得
                 docs = retriever.invoke(question) # vectorstoreから関連資料を先に取得
-                # 書籍名と画像ファイル名（metadata.source）を組み合わせて保持
-                referenced_books = list({
-                    f"{doc.metadata.get('book', '不明')}（{doc.metadata.get('source', '不明')}）"
-                    for doc in docs
-                })
-
                 # 3. 取得したdocsを、メタデータを含めたテキストとして結合
                 context_elements = []
                 for doc in docs:
@@ -254,12 +264,10 @@ if st.session_state["authentication_status"]:
                     try:
                         # JSONとしてパース
                         clean_content = raw_content.strip().replace("```json", "").replace("```", "")
-                        print(clean_content)
                         extracted_data = json.loads(clean_content)
                         # --- ここで「情報が存在しない場合」を判定 ---
                         if not extracted_data:
                             st.session_state.result_btn3 = "ご指定の成分を含む精油の情報は、提供された資料内には見つかりませんでした。"
-                            st.session_state.referenced_books = []
                         else:
                             # Python側で確実に降順ソート
                             sorted_data = sorted(extracted_data, key=lambda x: x['value'], reverse=True)
@@ -282,42 +290,80 @@ if st.session_state["authentication_status"]:
 
     with col_right:
         with st.container(border=True):
-            st.subheader("香りの成分について知る")
+            st.subheader("香りの情報を得る")
             st.caption("書籍の中から探す")
-
-            # 1. 独自の命令書（プロンプト）を作成
-            template = """
-            あなたは精油の専門家です。以下の【提供された資料】のみを使用して、質問に答えてください。
-
-            【提供された資料】:
-            {context}
-
-            質問: {question}
-            回答:"""
-
-            PROMPT = PromptTemplate(template=template, input_variables=["context", "question"])
-            col1, col2 = st.columns([0.8, 0.2])
+            options_map = load_options()
+            col1, col2, col3 = st.columns([0.4, 0.4, 0.2])
             with col1:
-                question = st.text_input(
-                    "知りたい成分を入力してください", 
-                    value="リナロールについて教えて",
-                    label_visibility="collapsed" # label_visibility="collapsed" でラベルを消すと高さが揃って綺麗です
+                # Step 1: カテゴリー選択
+                category = st.selectbox(
+                    "Step1. 知りたい項目を選択",
+                    options=list(options_map.keys()),
+                    index=0,
+                    label_visibility="collapsed"
                 )
             with col2:
+                # Step 2: カテゴリーに応じた具体的なキーワード選択
+                # categoryが変わると、ここに出てくる選択肢が自動で切り替わります
+                specific_item = st.selectbox(
+                    f"Step2. 具体的な「{category}」を選択",
+                    options=options_map[category],
+                    label_visibility="collapsed"
+                )
+            with col3:
                 executed_btn_4 = st.button("検索", key="btn_4", use_container_width=True)
-            if executed_btn_4 and question:
-                # 1. DBと条件を指定
-                retriever=vectorstore.as_retriever(search_kwargs={"k": 20})
-                # 2. DBに対してquestionに沿った検索を実行し、内容が似ている情報を指定数分取得
-                docs = retriever.invoke(question) # vectorstoreから関連資料を先に取得
-                # 書籍名と画像ファイル名（metadata.source）を組み合わせて保持
-                referenced_books = list({
-                    f"{doc.metadata.get('book', '不明')}（{doc.metadata.get('source', '不明')}）"
-                    for doc in docs
-                })
+            if executed_btn_4 and category and specific_item:
+                # 1. 独自の命令書（プロンプト）を作成
+                template = """
+                あなたは精油の専門家です。以下の【提供された資料】のみを使用して、質問に答えてください。
+                資料にない情報は「資料にはありません」と答え、自分の知識で補完しないでください。
+                各資料の冒頭にある「【出典情報】」から、book名とsource名を正確に読み取ってください。
+                【ルール】
+                1. **資料（ページ）ごとに、必ず1つのJSONオブジェクトを作成してください。** 複数の画像ソースにまたがる情報を1つの `content` にまとめないでください。
+                2. 引用した資料ごとに、その内容と対応する `book`, `source` をセットにしてリスト形式で出力してください。
+                3. 出力は必ず以下のJSON形式のみとし、説明文などは一切含めないでください。
 
-                # 3. 取得したdocsをテキストとして結合（context作成）
-                context = "\n\n".join([doc.page_content for doc in docs])
+                【出力フォーマット】
+                [
+                {{
+                    "content": "質問に沿った回答",
+                    "book": "読み取ったbook名",
+                    "source": "読み取ったsource名"
+                }},
+                {{
+                    "content": "別の資料から読み取った具体的な回答内容",
+                    "book": "読み取ったbook名",
+                    "source": "読み取ったsource名"
+                }}
+                ]
+                ... (以下、資料の数だけ続く)
+                ※該当なしの場合は `[]` を出力。
+
+                【提供された資料】:
+                {context}
+
+                質問: {question}
+                回答:"""
+
+                PROMPT = PromptTemplate(template=template, input_variables=["context", "question"])
+                # 1. DBと条件を指定
+                retriever=vectorstore.as_retriever(search_kwargs={"k": 10})
+                # 2. DBに対してquestionに沿った検索を実行し、内容が似ている情報を指定数分取得
+                question = f"{category}における{specific_item}について、提供された資料をもとに500文字以内で教えてください。"
+                docs = retriever.invoke(question) # vectorstoreから関連資料を先に取得
+                # 3. 取得したdocsを、メタデータを含めたテキストとして結合
+                context_elements = []
+                for doc in docs:
+                    content = doc.page_content
+                    # メタデータから取得（取得できない場合のデフォルト値を設定）
+                    book_name = doc.metadata.get('book', '不明な書籍')
+                    source_name = doc.metadata.get('source', '不明なソース')
+                    # テキストの直前に出典情報を明記する
+                    element = f"【出典情報】book: {book_name}, source: {source_name}\n内容: {content}"
+                    context_elements.append(element)
+
+                # セパレーターで区切って一つの巨大な文字列（context）にする
+                context = "\n\n---\n\n".join(context_elements)
                 # 4. AIに関する設定
                 llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
                 # PromptTemplateを使ってプロンプトを組み立てる
@@ -325,13 +371,54 @@ if st.session_state["authentication_status"]:
                 
                 with st.spinner("検索中..."):
                     response = llm.invoke(final_prompt)
-                    st.session_state.result_btn4 = response.content
-                    st.session_state.referenced_books = referenced_books
+                    raw_content = response.content
+                    answer_lines = []
+                    answer_image_paths = []
+                    try:
+                        # JSONとしてパース
+                        clean_content = raw_content.strip().replace("```json", "").replace("```", "")
+                        data_list = json.loads(clean_content)
+                        # --- ここで「情報が存在しない場合」を判定 ---
+                        if not data_list:
+                            st.session_state.result_btn4 = "ご指定の成分を含む精油の情報は、提供された資料内には見つかりませんでした。"
+                            st.session_state.answer_image_paths = []
+                        else:
+                            for item in data_list:
+                                # 1. コンテンツの改行処理（「。」を改行に置換）
+                                fixed_line = item.get("content", "").replace("。", "。  \n")
+                                answer_lines.append(fixed_line)
+                                # 2. 画像パスの組み立てと表示
+                                book = item.get("book")
+                                source = item.get("source")
+                                path = f"./data/{book}/{source}"
+                                # 重複を避けて保存
+                                if path not in answer_image_paths:
+                                    answer_image_paths.append(path)
+                            # 最終的な回答文（出典情報を除いたもの）
+                            clean_answer = "".join(answer_lines)
+                            st.session_state.result_btn4 = clean_answer
+                            st.session_state.answer_image_paths = answer_image_paths
+                    except Exception as e:
+                        st.error(f"JSONの解析に失敗しました: {e}")
+                        st.session_state.result_btn4 = ""
+                        st.session_state.answer_image_paths = []
+
             if st.session_state.result_btn4:
                 st.info(st.session_state.result_btn4)
-                # 引用元の本を表示
-                if st.session_state.referenced_books:
-                    st.caption(f"📚 参照した書籍: {', '.join(st.session_state.referenced_books)}")
+                # 画像部分を表示
+                # if answer_image_paths:
+                if st.session_state.answer_image_paths:
+                    # 1行に3枚並べる（1枚あたりのサイズが小さくなります）
+                    cols = st.columns(3)
+                    for i, img_path in enumerate(st.session_state.answer_image_paths):
+                        with cols[i % 3]:
+                            if os.path.exists(img_path):
+                                parts = img_path.split("/") # Pathを/区切りで分割
+                                custom_caption = "【参考文献】"+"[".join(parts[-2:])+"]" # 直近2つを取得
+                                # そのまま画像を表示させるとスキャン時のEXIF情報（回転情報）に依存するので制御する。
+                                st.image(load_fixed_image(img_path), caption=custom_caption, width="stretch")
+                            else:
+                                st.warning(f"画像ファイルが見つかりません: {img_path}")
 
 
 elif st.session_state.get("authentication_status") is False:
