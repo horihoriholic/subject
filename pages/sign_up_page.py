@@ -59,15 +59,18 @@ if st.session_state["authentication_status"]:
     )
     with st.sidebar:
         st.write(f"👤 ログイン中: \n\n**{st.session_state['name']}** さん")
-        authenticator.logout('ログアウト', 'main')
+        if st.button("ログアウト"):
+            # セッション情報をすべて消去（またはログイン関連のみ消去）
+            st.session_state["authentication_status"] = None
+            st.session_state["name"] = None
+            st.session_state["role"] = None
+            # URLを初期化して再描画
+            st.query_params.clear()
+            st.switch_page("streamlit_app.py")
         st.divider()
         st.caption("メニュー")
         if st.button("ホーム"):
-                # Streamlit multipage: `pages/page1.py` に遷移
-                if hasattr(st, "switch_page"):
-                    st.switch_page("streamlit_app.py")
-                else:
-                    st.warning("このStreamlitバージョンではページ遷移APIが利用できません。`pages/page1.py` を直接開いてください。")
+            st.switch_page("streamlit_app.py")
     # 管理者メニューでの表示
     st.title("ユーザー登録")
     # クライアントの取得

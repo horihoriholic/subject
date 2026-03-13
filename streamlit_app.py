@@ -91,7 +91,6 @@ def register_new_user(username, password, token):
         if user_res.data:
             # 3. 招待状を「使用済み」に更新する
             supabase.table("invitations").update({"is_used": True}).eq("token", token).execute()
-            st.success(f"ユーザー「{username}」の登録が完了しました！")
             return True
     except Exception as e:
         st.error(f"登録に失敗しました。: {e}")
@@ -118,17 +117,30 @@ def disable_sidebar():
         unsafe_allow_html=True # 本来は禁止されている『HTMLやCSS』を、例外的に実行することを許可する
     )
 
+def check_login(username, password):
+    # Supabaseからユーザーを1件取得
+    res = supabase.table("users").select("*").eq("username", username).execute()
+    
+    if res.data:
+        user = res.data[0]
+        # DBに保存されたハッシュ化パスワードと、入力されたパスワードを照合
+        if bcrypt.checkpw(password.encode('utf-8'), user["password_hash"].encode('utf-8')):
+            return user # 成功したらユーザー情報を返す
+    return None
+
+
 # 状態の初期化（アプリの冒頭などで一度だけ実行）
 if "reg_success" not in st.session_state:
     st.session_state.reg_success = False
 
 query_params = st.query_params
 st.set_page_config(layout="wide")
+supabase = init_supabase()
 # tokenあり（登録フォーム）
 if "token" in query_params:
     disable_sidebar()
-    supabase = init_supabase()
     token = query_params["token"]
+    new_user = ""
     # すでに登録成功しているかどうかで表示を分ける
     if not st.session_state.reg_success:
         # 1. トークンの有効性をDBで確認
@@ -146,6 +158,7 @@ if "token" in query_params:
                         # ここでハッシュ化して保存 ＆ is_usedをTrueに更新
                         if register_new_user(new_user, new_pass, token):
                             st.session_state.reg_success = True
+                            st.session_state["name"] = new_user
                             st.rerun()
             else:
                 st.error("招待リンクの有効期限が切れています。")
@@ -159,26 +172,35 @@ if "token" in query_params:
         # 【登録成功後の表示】フォームの外なので st.button が使える
         st.success("登録が完了しました！")
         st.balloons()
-        if st.button("ログイン画面へ進む"):
+        if st.button("ログイン"):
             # URLパラメータを消して、フラグを戻してからリロード
             st.query_params.clear()
             st.session_state.reg_success = False
+            st.session_state["authentication_status"] = True
+            st.session_state["role"] = "user" # 新規は一般ユーザー
             st.rerun()
 
 # tokenなし（未ログイン：ログイン画面 / ログイン済み：ホーム画面）
 else:
-    config = st.secrets.to_dict()
-    # cookie の設定も手動で組み立てる
-    authenticator = stauth.Authenticate(
-        config['credentials'],
-        config['cookie']['name'],
-        config['cookie']['key'],
-        config['cookie']['expiry_days']
-    )
-    try:
-        authenticator.login()
-    except Exception as e:
-        st.error(e)
+    if "authentication_status" not in st.session_state:
+        st.session_state["authentication_status"] = None
+    if not st.session_state["authentication_status"]:
+        disable_sidebar()
+        with st.form("login_form"):
+            u = st.text_input("ユーザー名")
+            p = st.text_input("パスワード", type="password")
+            if st.form_submit_button("ログイン"):
+                user = check_login(u, p)
+                if user:
+                    st.session_state["authentication_status"] = True
+                    st.session_state["name"] = user["username"]
+                    st.session_state["role"] = user["role"]
+                    st.rerun()
+                else:
+                    # st.session_state["authentication_status"] = False
+                    st.error("Usernameまたは、passwordが間違っています")
+            else:
+                st.warning("Usernameとpasswordを入力してください")
 
     if st.session_state["authentication_status"]:
         # --- StreamlitデフォルトのPagesナビ（sidebar先頭）を非表示 ---
@@ -210,29 +232,20 @@ else:
         )
         with st.sidebar:
             st.write(f"👤 ログイン中: \n\n**{st.session_state['name']}** さん")
-            authenticator.logout('ログアウト', 'main')
-            # --- 管理者のみ: ユーザー登録画面への導線 ---
-            role = None
-            try:
-                username = st.session_state.get("username")
-                role = (
-                    config.get("credentials", {})
-                    .get("usernames", {})
-                    .get(username, {})
-                    .get("user_role")
-                )
-            except Exception:
-                role = None
-
-            if role == "admin":
+            if st.button("ログアウト"):
+                # セッション情報をすべて消去（またはログイン関連のみ消去）
+                st.session_state["authentication_status"] = None
+                st.session_state["name"] = None
+                st.session_state["role"] = None
+                
+                # URLを初期化して再描画
+                st.query_params.clear()
+                st.rerun()
+            if st.session_state["role"] == "admin":
                 st.divider()
                 st.caption("メニュー")
                 if st.button("ユーザー登録"):
-                    # Streamlit multipage: `sign_up_page.py` に遷移
-                    if hasattr(st, "switch_page"):
-                        st.switch_page("sign_up_page.py")
-                    else:
-                        st.warning("このStreamlitバージョンではページ遷移APIが利用できません。`pages/page1.py` を直接開いてください。")
+                    st.switch_page("pages/sign_up_page.py")
 
         # --- 1. 結果を保持する箱を準備（初回のみ） ---
         if "result_btn1" not in st.session_state:
@@ -594,11 +607,3 @@ else:
                                 else:
                                     st.warning(f"画像ファイルが見つかりません: \n\n {book_name} / {source_name}")
 
-
-    elif st.session_state.get("authentication_status") is False:
-        st.error("Usernameまたは、passwordが間違っています")
-
-    # Streamlit特有の 「状態が変わるたびに、上から下まで全部読み直す」 ので、IF文を再度なめてくれて、ログアウトするとここに到達する。
-    elif st.session_state.get("authentication_status") is None:
-        disable_sidebar()
-        st.warning("Usernameとpasswordを入力してください")
