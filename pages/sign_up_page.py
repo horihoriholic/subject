@@ -34,74 +34,16 @@ def create_invitation():
         st.error(f"招待状の作成に失敗しました: {e}")
         return None
 
-config = st.secrets.to_dict()
-authenticator = stauth.Authenticate(
-    config['credentials'],
-    config['cookie']['name'],
-    config['cookie']['key'],
-    config['cookie']['expiry_days']
+st.set_page_config(
+    page_title="ユーザー登録画面",  # ブラウザのタブ名
+    layout="wide"
 )
-if st.session_state["authentication_status"]:
-    # --- StreamlitデフォルトのPagesナビ（sidebar先頭）を非表示 ---
-    st.markdown(
-        """
-        <style>
-            /* サイドバー先頭に出る「Pages」ナビを消す */
-            [data-testid="stSidebarNav"] { display: none; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-    st.set_page_config(
-        page_title="ユーザー登録画面",  # ブラウザのタブ名
-    )
-    with st.sidebar:
-        st.write(f"👤 ログイン中: \n\n**{st.session_state['name']}** さん")
-        if st.button("ログアウト"):
-            # セッション情報をすべて消去（またはログイン関連のみ消去）
-            st.session_state["authentication_status"] = None
-            st.session_state["name"] = None
-            st.session_state["role"] = None
-            # URLを初期化して再描画
-            st.query_params.clear()
-            st.switch_page("streamlit_app.py")
-        st.divider()
-        st.caption("メニュー")
-        if st.button("ホーム"):
-            st.switch_page("streamlit_app.py")
-    # 管理者メニューでの表示
-    st.title("ユーザー登録")
-    # クライアントの取得
-    supabase = init_supabase()
-    if st.button("招待URLを発行する"):
-        invite_url = create_invitation()
-        if not invite_url == None:
-            st.success("以下のURLをSlackで送ってください：")
-            st.code(invite_url)
-
-
-# Streamlit特有の 「状態が変わるたびに、上から下まで全部読み直す」 ので、IF文を再度なめてくれて、ログアウトするとここに到達する。
-elif st.session_state.get("authentication_status") is None:
-    st.warning("Usernameとpasswordを入力してください")
-    st.markdown(
-        """
-        <style>
-            /* サイドバー本体を消す */
-            [data-testid="stSidebar"] {
-                display: none;
-            }
-            /* サイドバーが開くための左側の余白(パディング)を0にする */
-            [data-testid="stSidebarCollapsedControl"] {
-                display: none;
-            }
-            section[data-testid="stMain"] {
-                margin-left: 0rem;
-                width: 100%;
-            }
-        </style>
-        """,
-        unsafe_allow_html=True # 本来は禁止されている『HTMLやCSS』を、例外的に実行することを許可する
-    )
-
+# 管理者メニューでの表示
+st.title("ユーザー登録")
+# クライアントの取得
+supabase = init_supabase()
+if st.button("招待URLを発行する"):
+    invite_url = create_invitation()
+    if not invite_url == None:
+        st.success("以下のURLをSlackで送ってください：")
+        st.code(invite_url)
