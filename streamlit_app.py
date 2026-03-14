@@ -107,7 +107,7 @@ def operation_cookie_data(add: bool, user_name: str):
     </script>
     """
     js_code = raw_code.replace("__COMMAND__", command)
-    # print(js_code)
+    print(js_code)
     js_result = components.html(
         js_code,
         height=0, # 画面に何も表示したくないときは高さを0にする
@@ -163,8 +163,6 @@ if "token" in query_params:
     if saved_user:
         # ログインユーザーがTokenありURLでアクセスした場合、Cookieを削除する
         js_result = operation_cookie_data(add=False, user_name="invalid")
-        if js_result is None:
-            st.stop()
         st.session_state["authentication_status"] = None
         # セッション情報をすべて消去（またはログイン関連のみ消去）
         st.session_state["name"] = None
@@ -255,16 +253,9 @@ else:
                 # URLを初期化して再描画
                 st.query_params.clear()
                 js_result = operation_cookie_data(add=False, user_name="invalid")
-                if js_result is None:
-                    st.stop()
-                st.session_state.logout_js_done = True
-
-            if st.session_state.get("logout_js_done"):
-                st.session_state.logout_js_done = False
-                st.session_state["authentication_status"] = None
+                print(js_result)
                 # セッション情報をすべて消去（またはログイン関連のみ消去）
                 st.session_state.clear()
-                st.session_state["role"] = None
                 st.rerun()
 
         pg.run()
