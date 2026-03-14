@@ -11,7 +11,7 @@ def get_base_url():
     
     if is_cloud:
         # 本番環境：Secretsから取得
-        return st.secrets["app"]["base_url"]
+        return "https://" + st.secrets["app"]["base_url"]
     else:
         # ローカル環境：標準のポート番号を返す
         return "http://localhost:8501"
