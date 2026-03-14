@@ -74,7 +74,7 @@ def get_base_url():
         return "localhost"
 
 # Cookieに追加/削除
-def operation_cookie_data(add: bool, user_name: str):
+def operation_cookie_data_bk(add: bool, user_name: str):
     if add:
         order = "max-age=172800" # 2日間
         domain = ""
@@ -111,6 +111,27 @@ def operation_cookie_data(add: bool, user_name: str):
     js_result = components.html(
         js_code,
         height=0, # 画面に何も表示したくないときは高さを0にする
+    )
+    time.sleep(0.5) # 安定しないので0.5秒待機
+    return js_result
+
+# Cookieに追加/削除
+def operation_cookie_data(add: bool, user_name: str):
+    if add:
+        order = "max-age=172800" # 2日間
+        domain = ""
+    else:
+        order = "max-age=0"
+        domain = f"domain={get_base_url()};"
+    js_code = f"""
+    (function() {{
+        window.parent.document.cookie = "logged_in_user={user_name}; path=/; {domain} {order}";
+        return "done";
+    }})();
+    """
+    js_result = streamlit_js_eval(
+        js_expressions=js_code,
+        key="cookie_operation_task"
     )
     time.sleep(0.5) # 安定しないので0.5秒待機
     return js_result
@@ -229,8 +250,8 @@ else:
                 if user:
                     # cookie_manager.set("logged_in_user", user["username"], expires_at=control_expires_at(2))
                     js_result = operation_cookie_data(add=True, user_name=user["username"])
-                    if js_result is None:
-                        st.stop()
+                    # if js_result is None:
+                    #     st.stop()
                     st.session_state["authentication_status"] = True
                     st.session_state["name"] = user["username"]
                     st.session_state["role"] = user["role"]
@@ -252,10 +273,9 @@ else:
                 # cookie_manager.delete("logged_in_user")                
                 # URLを初期化して再描画
                 st.query_params.clear()
-                js_result = operation_cookie_data(add=False, user_name="invalid")
-                print(js_result)
                 # セッション情報をすべて消去（またはログイン関連のみ消去）
                 st.session_state.clear()
+                js_result = operation_cookie_data(add=False, user_name="invalid")
                 st.rerun()
 
         pg.run()
