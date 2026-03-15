@@ -133,6 +133,8 @@ def operation_cookie_data(add: bool, user_name: str):
         js_expressions=js_code,
         key="cookie_operation_task"
     )
+    if not add and js_result == None:
+        cookie_manager.delete("logged_in_user")                
     time.sleep(0.5) # 安定しないので0.5秒待機
     return js_result
 
@@ -150,6 +152,23 @@ def check_login(username, password):
 def control_expires_at(add_day):
     return datetime.now() + timedelta(days=add_day)
 
+# ユーザー名が既登録でない＆パスワードが8桁以上、大文字・小文字・数字を含む正規表現
+def check_user_registory(username, password):
+    error_messages = []
+    if username:
+        res = supabase.table("users").select("*").eq("username", username).execute()
+        if res.data:
+            user = res.data[0]
+            error_messages.append("そのユーザー名は利用されています。別のユーザー名を入力してください。")
+    else:
+        error_messages.append("希望のユーザー名を入力してください。")
+    # 8桁以上、大文字・小文字・数字を含む正規表現
+    pattern = r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$"
+    if re.match(pattern, password) is None:
+        error_messages.append("パスワードは8文字以上で、英大文字・小文字・数字を含めてください。")
+    
+    return error_messages
+
 
 # 1. 各ページを定義（ファイルとして切り出しておく）
 page_main = st.Page("pages/main.py", title="ホーム", default=True)
@@ -161,7 +180,7 @@ if "reg_success" not in st.session_state:
     st.session_state.reg_success = False
 
 query_params = st.query_params
-st.set_page_config(layout="centered")
+st.set_page_config(layout="wide")
 supabase = init_supabase()
 cookie_manager = stx.CookieManager()
 # リロード時：Cookieがあればログイン状態を復元（一番上に書く）
@@ -205,11 +224,16 @@ if "token" in query_params:
                     new_user = st.text_input("希望のユーザー名")
                     new_pass = st.text_input("パスワード", type="password")
                     if st.form_submit_button("登録"):
-                        # ここでハッシュ化して保存 ＆ is_usedをTrueに更新
-                        if register_new_user(new_user, new_pass, token):
-                            st.session_state.reg_success = True
-                            st.session_state["name"] = new_user
-                            st.rerun()
+                        # バリデーション
+                        error_messages = check_user_registory(new_user,new_pass)
+                        if error_messages:
+                            st.error("\n\n".join(error_messages))
+                        else:
+                            # ここでハッシュ化して保存 ＆ is_usedをTrueに更新
+                            if register_new_user(new_user, new_pass, token):
+                                st.session_state.reg_success = True
+                                st.session_state["name"] = new_user
+                                st.rerun()
             else:
                 st.error("招待リンクの有効期限が切れています。")
                 if st.button("ログイン画面へ"):
@@ -270,7 +294,6 @@ else:
         with st.sidebar:
             st.write(f"👤 ログイン中: \n\n**{st.session_state['name']}** さん")
             if st.button("ログアウト"):
-                # cookie_manager.delete("logged_in_user")                
                 # URLを初期化して再描画
                 st.query_params.clear()
                 # セッション情報をすべて消去（またはログイン関連のみ消去）
