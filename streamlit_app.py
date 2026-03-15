@@ -119,13 +119,13 @@ def operation_cookie_data_bk(add: bool, user_name: str):
 def operation_cookie_data(add: bool, user_name: str):
     if add:
         order = "max-age=172800" # 2日間
-        domain = ""
+        # domain = ""
     else:
         order = "max-age=0"
-        domain = f"domain={get_base_url()};"
+        # domain = f"domain={get_base_url()};"
     js_code = f"""
     (function() {{
-        window.parent.document.cookie = "logged_in_user={user_name}; path=/; {domain} {order}";
+        window.parent.document.cookie = "logged_in_user={user_name}; path=/; {order}";
         return "done";
     }})();
     """
