@@ -139,6 +139,26 @@ def operation_cookie_data(add: bool, user_name: str):
     time.sleep(0.5) # 安定しないので0.5秒待機
     return js_result
 
+def get_cookie_data():
+    # JSで特定のCookie名を探して返す
+    js_val = streamlit_js_eval(
+        js_expressions="""
+            (function() {
+                const name = "logged_in_user=";
+                const decodedCookie = decodeURIComponent(window.parent.document.cookie);
+                const ca = decodedCookie.split(';');
+                for(let i = 0; i < ca.length; i++) {
+                    let c = ca[i].trim();
+                    if (c.indexOf(name) == 0) return c.substring(name.length, c.length);
+                }
+                return null;
+            })()
+        """,
+        key="get_cookie_fallback"
+    )
+    return js_val
+
+
 def check_login(username, password):
     # Supabaseからユーザーを1件取得
     res = supabase.table("users").select("*").eq("username", username).execute()
@@ -192,6 +212,8 @@ cookie_manager = stx.CookieManager()
 try:
     # saved_user = cookie_manager.get(cookie="logged_in_user")
     saved_user = st.context.cookies.get("logged_in_user")
+    if saved_user is None and get_base_url() != "localhost":
+        saved_user = get_cookie_data()
 except Exception as e:
     saved_user = None
 logging.info(f"【DEBUG】saved_user: {saved_user}")
