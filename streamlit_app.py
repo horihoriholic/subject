@@ -194,8 +194,8 @@ try:
     saved_user = st.context.cookies.get("logged_in_user")
 except Exception as e:
     saved_user = None
-logging.info("saved_user")
-logging.info(st.session_state["authentication_status"])
+logging.info(f"【DEBUG】saved_user: {saved_user}")
+logging.info(f"【DEBUG】role: {st.session_state.get("authentication_status")}")
 if saved_user and "authentication_status" not in st.session_state:
     # Cookieがあれば、Cookieから情報を取得してログイン状態を保持。ただしロールはDBを再照合
     res = supabase.table("users").select("role").eq("username", saved_user).execute()
