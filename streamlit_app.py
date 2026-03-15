@@ -288,7 +288,7 @@ else:
     else:
         # st.session_state["authentication_status"] = True
         pages.append(page_main)
-        if st.session_state["role"] == "admin":
+        if st.session_state.get("role") == "admin":
             pages.append(page_signup)
         pg = st.navigation(pages)
         with st.sidebar:
