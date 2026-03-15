@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 import bcrypt
 from streamlit_js_eval import streamlit_js_eval, get_cookie
 import time
+import logging
 
 def register_new_user(username, password, token):
     # 1. パスワードをハッシュ化（ソルト込み）
@@ -169,7 +170,11 @@ def check_user_registory(username, password):
     
     return error_messages
 
+# ロガーのセットアップ
+logger = logging.getLogger(__name__)
 
+# レベルを INFO 以上に設定（DEBUGだと出ない場合があるため）
+logging.basicConfig(level=logging.INFO)
 # 1. 各ページを定義（ファイルとして切り出しておく）
 page_main = st.Page("pages/main.py", title="ホーム", default=True)
 page_signup = st.Page("pages/sign_up_page.py", title="ユーザー登録")
@@ -189,7 +194,8 @@ try:
     saved_user = st.context.cookies.get("logged_in_user")
 except Exception as e:
     saved_user = None
-
+logging.info("saved_user")
+logging.info(st.session_state["authentication_status"])
 if saved_user and "authentication_status" not in st.session_state:
     # Cookieがあれば、Cookieから情報を取得してログイン状態を保持。ただしロールはDBを再照合
     res = supabase.table("users").select("role").eq("username", saved_user).execute()
