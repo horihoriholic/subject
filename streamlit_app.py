@@ -19,7 +19,6 @@ from datetime import datetime, timedelta
 import bcrypt
 from streamlit_js_eval import streamlit_js_eval, get_cookie
 import time
-import logging
 
 def register_new_user(username, password, token):
     # 1. パスワードをハッシュ化（ソルト込み）
@@ -139,26 +138,6 @@ def operation_cookie_data(add: bool, user_name: str):
     time.sleep(0.5) # 安定しないので0.5秒待機
     return js_result
 
-def get_cookie_data():
-    # JSで特定のCookie名を探して返す
-    js_val = streamlit_js_eval(
-        js_expressions="""
-            (function() {
-                const name = "logged_in_user=";
-                const decodedCookie = decodeURIComponent(window.parent.document.cookie);
-                const ca = decodedCookie.split(';');
-                for(let i = 0; i < ca.length; i++) {
-                    let c = ca[i].trim();
-                    if (c.indexOf(name) == 0) return c.substring(name.length, c.length);
-                }
-                return null;
-            })()
-        """,
-        key="get_cookie_fallback"
-    )
-    return js_val
-
-
 def check_login(username, password):
     # Supabaseからユーザーを1件取得
     res = supabase.table("users").select("*").eq("username", username).execute()
@@ -190,11 +169,7 @@ def check_user_registory(username, password):
     
     return error_messages
 
-# ロガーのセットアップ
-logger = logging.getLogger(__name__)
 
-# レベルを INFO 以上に設定（DEBUGだと出ない場合があるため）
-logging.basicConfig(level=logging.INFO)
 # 1. 各ページを定義（ファイルとして切り出しておく）
 page_main = st.Page("pages/main.py", title="ホーム", default=True)
 page_signup = st.Page("pages/sign_up_page.py", title="ユーザー登録")
@@ -212,12 +187,9 @@ cookie_manager = stx.CookieManager()
 try:
     # saved_user = cookie_manager.get(cookie="logged_in_user")
     saved_user = st.context.cookies.get("logged_in_user")
-    if saved_user is None and get_base_url() != "localhost":
-        saved_user = get_cookie_data()
 except Exception as e:
     saved_user = None
-logging.info(f"【DEBUG】saved_user: {saved_user}")
-logging.info(f"【DEBUG】role: {st.session_state.get("authentication_status")}")
+
 if saved_user and "authentication_status" not in st.session_state:
     # Cookieがあれば、Cookieから情報を取得してログイン状態を保持。ただしロールはDBを再照合
     res = supabase.table("users").select("role").eq("username", saved_user).execute()
