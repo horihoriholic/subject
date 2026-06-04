@@ -373,8 +373,11 @@ with col_right:
             # 1. DBと条件を指定
             retriever=vectorstore.as_retriever(search_kwargs={"k": 10})
             # 2. DBに対してquestionに沿った検索を実行し、内容が似ている情報を指定数分取得
+            # 修正. 検索用のクエリは「単語・キーワード」にする
+            search_query = f"{specific_item}"
+            docs = retriever.invoke(search_query) 
             question = f"{category}における{specific_item}について、提供された資料をもとに500文字以内で教えてください。"
-            docs = retriever.invoke(question) # vectorstoreから関連資料を先に取得
+            # docs = retriever.invoke(question) # vectorstoreから関連資料を先に取得
             # 3. 取得したdocsを、メタデータを含めたテキストとして結合
             context_elements = []
             for doc in docs:

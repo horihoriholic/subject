@@ -173,6 +173,7 @@ def check_user_registory(username, password):
 # 1. 各ページを定義（ファイルとして切り出しておく）
 page_main = st.Page("pages/main.py", title="ホーム", default=True)
 page_signup = st.Page("pages/sign_up_page.py", title="ユーザー登録")
+page_pubchem = st.Page("pages/search_pubchem.py", title="PubChemサーチ")
 
 pages = []
 # 状態の初期化（アプリの冒頭などで一度だけ実行）
@@ -288,6 +289,7 @@ else:
     else:
         # st.session_state["authentication_status"] = True
         pages.append(page_main)
+        pages.append(page_pubchem)
         if st.session_state.get("role") == "admin":
             pages.append(page_signup)
         pg = st.navigation(pages)
