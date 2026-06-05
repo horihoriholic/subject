@@ -21,6 +21,7 @@ def log_not_found_name(name_jp):
 
 def load_name_pairs_from_log():
     log_path = os.path.join(os.path.dirname(__file__), "not_found_cid.log")
+    print(f"ログファイル: {log_path}")
     if not os.path.exists(log_path):
         print(f"ログファイルが見つかりません: {log_path}")
         return []

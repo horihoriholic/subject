@@ -23,11 +23,34 @@ PINECONE_NAMESPACE = st.secrets.get("PINECONE_NAMESPACE", os.getenv("PINECONE_NA
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_BUCKET_NAME = st.secrets["supabase"]["bucket_name"]
 
-# JSONファイルを読み込む関数
-@st.cache_data  # 毎回ファイルを読み込まないようにキャッシュする
-def load_options():
-    with open("master_data.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+# Supabaseクライアント（col_right_answers テーブル参照用）
+supabase = init_supabase()
+
+# col_right_answers からカテゴリー・キーワードの選択肢を組み立てる
+@st.cache_data  # 毎回DBに問い合わせないようにキャッシュする
+def load_col_right_options():
+    response = supabase.table("col_right_answers").select("category, keyword").execute()
+    rows = response.data
+    if not rows:
+        return {}
+
+    options_map = {}
+    for row in rows:
+        category_name = row.get("category")
+        keyword_name = row.get("keyword")
+        if not category_name or not keyword_name:
+            continue
+        if category_name not in options_map:
+            options_map[category_name] = []
+        # 同じキーワードが重複しないようにする
+        if keyword_name not in options_map[category_name]:
+            options_map[category_name].append(keyword_name)
+
+    # selectbox の表示順を安定させるためソートする
+    sorted_options_map = {}
+    for category_name in sorted(options_map.keys()):
+        sorted_options_map[category_name] = sorted(options_map[category_name])
+    return sorted_options_map
 
 # JSONファイルを読み込む関数
 @st.cache_data  # 毎回ファイルを読み込まないようにキャッシュする
@@ -85,6 +108,8 @@ if "result_btn4" not in st.session_state:
     st.session_state.result_btn4 = ""
 if "answer_image_paths" not in st.session_state:
     st.session_state.answer_image_paths = []
+if "answer_loaded_images" not in st.session_state:
+    st.session_state.answer_loaded_images = []
 
 if not PINECONE_API_KEY:
     st.error("PINECONE_API_KEY が未設定です。（Streamlit secrets か環境変数で設定してください）")
@@ -316,139 +341,84 @@ with col_right:
     with st.container(border=True):
         st.subheader("香りの情報を得る")
         st.caption("書籍の中から探す")
-        options_map = load_options()
-        col1, col2, col3 = st.columns([0.4, 0.4, 0.2])
-        with col1:
-            # Step 1: カテゴリー選択
-            category = st.selectbox(
-                "Step1. 知りたい項目を選択",
-                options=list(options_map.keys()),
-                index=0,
-                label_visibility="collapsed"
-            )
-        with col2:
-            # Step 2: カテゴリーに応じた具体的なキーワード選択
-            # categoryが変わると、ここに出てくる選択肢が自動で切り替わります
-            specific_item = st.selectbox(
-                f"Step2. 具体的な「{category}」を選択",
-                options=options_map[category],
-                label_visibility="collapsed"
-            )
-        with col3:
-            executed_btn_4 = st.button("検索", key="btn_4", use_container_width=True)
-        if executed_btn_4 and category and specific_item:
-            # 1. 独自の命令書（プロンプト）を作成
-            template = """
-            あなたは精油の専門家です。以下の【提供された資料】のみを使用して、質問に答えてください。
-            資料にない情報は「資料にはありません」と答え、自分の知識で補完しないでください。
-            各資料の冒頭にある「【出典情報】」から、book名とsource名を正確に読み取ってください。
-            【ルール】
-            1. **資料（ページ）ごとに、必ず1つのJSONオブジェクトを作成してください。** 複数の画像ソースにまたがる情報を1つの `content` にまとめないでください。
-            2. 引用した資料ごとに、その内容と対応する `book`, `source` をセットにしてリスト形式で出力してください。
-            3. 出力は必ず以下のJSON形式のみとし、説明文などは一切含めないでください。
-
-            【出力フォーマット】
-            [
-            {{
-                "content": "質問に沿った回答",
-                "book": "読み取ったbook名",
-                "source": "読み取ったsource名"
-            }},
-            {{
-                "content": "別の資料から読み取った具体的な回答内容",
-                "book": "読み取ったbook名",
-                "source": "読み取ったsource名"
-            }}
-            ]
-            ... (以下、資料の数だけ続く)
-            ※該当なしの場合は `[]` を出力。
-
-            【提供された資料】:
-            {context}
-
-            質問: {question}
-            回答:"""
-
-            PROMPT = PromptTemplate(template=template, input_variables=["context", "question"])
-            # 1. DBと条件を指定
-            retriever=vectorstore.as_retriever(search_kwargs={"k": 10})
-            # 2. DBに対してquestionに沿った検索を実行し、内容が似ている情報を指定数分取得
-            # 修正. 検索用のクエリは「単語・キーワード」にする
-            search_query = f"{specific_item}"
-            docs = retriever.invoke(search_query) 
-            question = f"{category}における{specific_item}について、提供された資料をもとに500文字以内で教えてください。"
-            # docs = retriever.invoke(question) # vectorstoreから関連資料を先に取得
-            # 3. 取得したdocsを、メタデータを含めたテキストとして結合
-            context_elements = []
-            for doc in docs:
-                content = doc.page_content
-                # メタデータから取得（取得できない場合のデフォルト値を設定）
-                book_name = doc.metadata.get('book', '不明な書籍')
-                source_name = doc.metadata.get('source', '不明なソース')
-                # テキストの直前に出典情報を明記する
-                element = f"【出典情報】book: {book_name}, source: {source_name}\n内容: {content}"
-                context_elements.append(element)
-
-            # セパレーターで区切って一つの巨大な文字列（context）にする
-            context = "\n\n---\n\n".join(context_elements)
-            # 4. AIに関する設定
-            llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
-            # PromptTemplateを使ってプロンプトを組み立てる
-            final_prompt = PROMPT.format(context=context, question=question)
-            
-            with st.spinner("検索中..."):
-                response = llm.invoke(final_prompt)
-                raw_content = response.content
-                answer_lines = []
-                answer_image_paths = []
-                try:
-                    # JSONとしてパース
-                    clean_content = raw_content.strip().replace("```json", "").replace("```", "")
-                    data_list = json.loads(clean_content)
-                    # --- ここで「情報が存在しない場合」を判定 ---
-                    if not data_list:
-                        st.session_state.result_btn4 = "ご指定の成分を含む精油の情報は、提供された資料内には見つかりませんでした。"
+        # Supabase col_right_answers からカテゴリー・キーワード一覧を取得
+        options_map = load_col_right_options()
+        if not options_map:
+            st.warning("表示できる項目がありません。col_right_answers テーブルにデータを登録してください。")
+        else:
+            col1, col2, col3 = st.columns([0.4, 0.4, 0.2])
+            with col1:
+                # Step 1: カテゴリー選択（テーブルの category 列）
+                category = st.selectbox(
+                    "Step1. 知りたい項目を選択",
+                    options=list(options_map.keys()),
+                    index=0,
+                    label_visibility="collapsed"
+                )
+            with col2:
+                # Step 2: カテゴリーに応じたキーワード選択（テーブルの keyword 列）
+                # categoryが変わると、ここに出てくる選択肢が自動で切り替わります
+                specific_item = st.selectbox(
+                    f"Step2. 具体的な「{category}」を選択",
+                    options=options_map[category],
+                    label_visibility="collapsed"
+                )
+            with col3:
+                executed_btn_4 = st.button("検索", key="btn_4", use_container_width=True)
+            if executed_btn_4 and category and specific_item:
+                with st.spinner("検索中..."):
+                    # 選択した category / keyword に一致する回答を Supabase から取得
+                    response = (
+                        supabase.table("col_right_answers")
+                        .select("clean_answer, answer_image_paths")
+                        .eq("category", category)
+                        .eq("keyword", specific_item)
+                        .execute()
+                    )
+                    rows = response.data
+                    if not rows:
+                        st.session_state.result_btn4 = (
+                            "ご指定の項目に関する情報は見つかりませんでした。"
+                        )
                         st.session_state.answer_image_paths = []
+                        st.session_state.answer_loaded_images = []
                     else:
-                        for item in data_list:
-                            # 1. コンテンツの改行処理（「。」を改行に置換）
-                            fixed_line = item.get("content", "").replace("。", "。  \n")
-                            answer_lines.append(fixed_line)
-                            # 2. 画像パスの組み立てと表示
-                            book = item.get("book")
-                            source = item.get("source")
-                            path = get_img_url(f"data/{book}/{source}") 
-                            # 重複を避けて保存
-                            if not any(img['path'] == path for img in answer_image_paths):
-                                answer_image_paths.append({
-                                    "path": path,
-                                    "book": book,
-                                    "source": source
-                                })
-                        # 最終的な回答文（出典情報を除いたもの）
-                        clean_answer = "".join(answer_lines)
+                        row = rows[0]
+                        clean_answer = row.get("clean_answer", "")
+                        answer_image_paths = row.get("answer_image_paths", [])
+                        # jsonb 以外の形式が入っていた場合は空リストにする
+                        if not isinstance(answer_image_paths, list):
+                            answer_image_paths = []
                         st.session_state.result_btn4 = clean_answer
                         st.session_state.answer_image_paths = answer_image_paths
-                except Exception as e:
-                    st.error(f"JSONの解析に失敗しました: {e}")
-                    st.session_state.result_btn4 = ""
-                    st.session_state.answer_image_paths = []
+
+                        # 画像を Supabase から取得し終わるまでスピナーを維持する
+                        answer_loaded_images = []
+                        for img_info in answer_image_paths:
+                            img_path = img_info.get("path", "")
+                            book_name = img_info.get("book", "")
+                            source_name = img_info.get("source", "")
+                            fixed_img = load_fixed_image_from_url(img_path)
+                            answer_loaded_images.append({
+                                "image": fixed_img,
+                                "book": book_name,
+                                "source": source_name,
+                            })
+                        st.session_state.answer_loaded_images = answer_loaded_images
 
         if st.session_state.result_btn4:
             st.info(st.session_state.result_btn4)
-            # 画像部分を表示
-            # if answer_image_paths:
-            if st.session_state.answer_image_paths:
+            # 検索時に読み込み済みの画像を表示（再取得しない）
+            if st.session_state.answer_loaded_images:
                 # 1行に3枚並べる（1枚あたりのサイズが小さくなります）
                 cols = st.columns(3)
-                for i, img_info in enumerate(st.session_state.answer_image_paths):
-                    img_path = img_info["path"]
-                    book_name = img_info["book"]
-                    source_name = img_info["source"]
+                for i, img_info in enumerate(st.session_state.answer_loaded_images):
+                    fixed_img = img_info.get("image")
+                    book_name = img_info.get("book", "")
+                    source_name = img_info.get("source", "")
                     with cols[i % 3]:
-                        fixed_img = load_fixed_image_from_url(img_path) # SUPABASEの場合
                         if fixed_img:
-                            custom_caption = f"【参考文献】{book_name} / {source_name}" # 直近2つを取得
+                            custom_caption = f"【参考文献】{book_name} / {source_name}"
                             # そのまま画像を表示させるとスキャン時のEXIF情報（回転情報）に依存するので制御する。
                             st.image(fixed_img, caption=custom_caption, width="stretch")
                         else:

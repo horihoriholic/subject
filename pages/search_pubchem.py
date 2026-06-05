@@ -1,5 +1,9 @@
 import streamlit as st
 import pandas as pd
+import json
+from PIL import Image, ImageOps
+import requests
+from io import BytesIO
 from connect_supabase import init_supabase
 
 st.set_page_config(
@@ -8,7 +12,204 @@ st.set_page_config(
 )
 supabase = init_supabase()
 
-# 3. データの取得（キャッシュを利用して高速化）
+ESSENTIAL_OIL_CATEGORY = "精油"
+FRAGRANCE_COMPONENT_CATEGORY = "香りの成分"
+
+# --- 結果を保持する箱を準備（初回のみ） ---
+if "pubchem_result_btn4" not in st.session_state:
+    st.session_state.pubchem_result_btn4 = ""
+if "pubchem_answer_image_paths" not in st.session_state:
+    st.session_state.pubchem_answer_image_paths = []
+if "pubchem_answer_loaded_images" not in st.session_state:
+    st.session_state.pubchem_answer_loaded_images = []
+if "pubchem_result_btn4_component" not in st.session_state:
+    st.session_state.pubchem_result_btn4_component = ""
+if "pubchem_answer_image_paths_component" not in st.session_state:
+    st.session_state.pubchem_answer_image_paths_component = []
+if "pubchem_answer_loaded_images_component" not in st.session_state:
+    st.session_state.pubchem_answer_loaded_images_component = []
+
+# master_data.json から指定カテゴリーのキーワード一覧を読み込む
+@st.cache_data
+def load_master_data_keywords(category_name):
+    with open("master_data.json", "r", encoding="utf-8") as f:
+        master_data = json.load(f)
+    keywords = master_data.get(category_name, [])
+    return sorted(keywords)
+
+def load_fixed_image_from_url(url):
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            img = Image.open(BytesIO(response.content))
+            return ImageOps.exif_transpose(img)
+        else:
+            return None
+    except Exception as e:
+        st.error(f"画像取得中にエラーが発生しました: {e}")
+        return None
+
+col_scent_info_left, col_scent_info_right = st.columns(2)
+
+with col_scent_info_left:
+    with st.container(border=True):
+        st.subheader("香りの情報を得る")
+        st.caption("書籍の中から探す（精油）")
+        essential_oil_keywords = load_master_data_keywords(ESSENTIAL_OIL_CATEGORY)
+        if not essential_oil_keywords:
+            st.warning(
+                "表示できる項目がありません。master_data.json の「精油」にデータを登録してください。"
+            )
+        else:
+            col1, col2 = st.columns([0.8, 0.2])
+            with col1:
+                specific_item = st.selectbox(
+                    "精油を選択",
+                    options=essential_oil_keywords,
+                    index=0,
+                    label_visibility="collapsed",
+                    key="pubchem_select_essential_oil",
+                )
+            with col2:
+                executed_btn_4 = st.button("検索", key="pubchem_btn_4", use_container_width=True)
+            if executed_btn_4 and specific_item:
+                category = ESSENTIAL_OIL_CATEGORY
+                with st.spinner("検索中..."):
+                    response = (
+                        supabase.table("col_right_answers")
+                        .select("clean_answer, answer_image_paths")
+                        .eq("category", category)
+                        .eq("keyword", specific_item)
+                        .execute()
+                    )
+                    rows = response.data
+                    if not rows:
+                        st.session_state.pubchem_result_btn4 = (
+                            "ご指定の項目に関する情報は見つかりませんでした。"
+                        )
+                        st.session_state.pubchem_answer_image_paths = []
+                        st.session_state.pubchem_answer_loaded_images = []
+                    else:
+                        row = rows[0]
+                        clean_answer = row.get("clean_answer", "")
+                        answer_image_paths = row.get("answer_image_paths", [])
+                        if not isinstance(answer_image_paths, list):
+                            answer_image_paths = []
+                        st.session_state.pubchem_result_btn4 = clean_answer
+                        st.session_state.pubchem_answer_image_paths = answer_image_paths
+
+                        answer_loaded_images = []
+                        for img_info in answer_image_paths:
+                            img_path = img_info.get("path", "")
+                            book_name = img_info.get("book", "")
+                            source_name = img_info.get("source", "")
+                            fixed_img = load_fixed_image_from_url(img_path)
+                            answer_loaded_images.append({
+                                "image": fixed_img,
+                                "book": book_name,
+                                "source": source_name,
+                            })
+                        st.session_state.pubchem_answer_loaded_images = answer_loaded_images
+
+        if st.session_state.pubchem_result_btn4:
+            st.info(st.session_state.pubchem_result_btn4)
+            if st.session_state.pubchem_answer_loaded_images:
+                cols = st.columns(3)
+                for i, img_info in enumerate(st.session_state.pubchem_answer_loaded_images):
+                    fixed_img = img_info.get("image")
+                    book_name = img_info.get("book", "")
+                    source_name = img_info.get("source", "")
+                    with cols[i % 3]:
+                        if fixed_img:
+                            custom_caption = f"【参考文献】{book_name} / {source_name}"
+                            st.image(fixed_img, caption=custom_caption, width="stretch")
+                        else:
+                            st.warning(
+                                f"画像ファイルが見つかりません: \n\n {book_name} / {source_name}"
+                            )
+
+with col_scent_info_right:
+    with st.container(border=True):
+        st.subheader("香りの情報を得る")
+        st.caption("書籍の中から探す（香りの成分）")
+        fragrance_component_keywords = load_master_data_keywords(FRAGRANCE_COMPONENT_CATEGORY)
+        if not fragrance_component_keywords:
+            st.warning(
+                "表示できる項目がありません。master_data.json の「香りの成分」にデータを登録してください。"
+            )
+        else:
+            col1, col2 = st.columns([0.8, 0.2])
+            with col1:
+                specific_item = st.selectbox(
+                    "香りの成分を選択",
+                    options=fragrance_component_keywords,
+                    index=0,
+                    label_visibility="collapsed",
+                    key="pubchem_select_component",
+                )
+            with col2:
+                executed_btn_4_component = st.button(
+                    "検索", key="pubchem_btn_4_component", use_container_width=True
+                )
+            if executed_btn_4_component and specific_item:
+                category = FRAGRANCE_COMPONENT_CATEGORY
+                with st.spinner("検索中..."):
+                    response = (
+                        supabase.table("col_right_answers")
+                        .select("clean_answer, answer_image_paths")
+                        .eq("category", category)
+                        .eq("keyword", specific_item)
+                        .execute()
+                    )
+                    rows = response.data
+                    if not rows:
+                        st.session_state.pubchem_result_btn4_component = (
+                            "ご指定の項目に関する情報は見つかりませんでした。"
+                        )
+                        st.session_state.pubchem_answer_image_paths_component = []
+                        st.session_state.pubchem_answer_loaded_images_component = []
+                    else:
+                        row = rows[0]
+                        clean_answer = row.get("clean_answer", "")
+                        answer_image_paths = row.get("answer_image_paths", [])
+                        if not isinstance(answer_image_paths, list):
+                            answer_image_paths = []
+                        st.session_state.pubchem_result_btn4_component = clean_answer
+                        st.session_state.pubchem_answer_image_paths_component = answer_image_paths
+
+                        answer_loaded_images = []
+                        for img_info in answer_image_paths:
+                            img_path = img_info.get("path", "")
+                            book_name = img_info.get("book", "")
+                            source_name = img_info.get("source", "")
+                            fixed_img = load_fixed_image_from_url(img_path)
+                            answer_loaded_images.append({
+                                "image": fixed_img,
+                                "book": book_name,
+                                "source": source_name,
+                            })
+                        st.session_state.pubchem_answer_loaded_images_component = answer_loaded_images
+
+        if st.session_state.pubchem_result_btn4_component:
+            st.info(st.session_state.pubchem_result_btn4_component)
+            if st.session_state.pubchem_answer_loaded_images_component:
+                cols = st.columns(3)
+                for i, img_info in enumerate(st.session_state.pubchem_answer_loaded_images_component):
+                    fixed_img = img_info.get("image")
+                    book_name = img_info.get("book", "")
+                    source_name = img_info.get("source", "")
+                    with cols[i % 3]:
+                        if fixed_img:
+                            custom_caption = f"【参考文献】{book_name} / {source_name}"
+                            st.image(fixed_img, caption=custom_caption, width="stretch")
+                        else:
+                            st.warning(
+                                f"画像ファイルが見つかりません: \n\n {book_name} / {source_name}"
+                            )
+
+st.divider()
+
+# データの取得（キャッシュを利用して高速化）
 @st.cache_data(ttl=600) # 10分間キャッシュを保持
 def load_data():
     # "compounds" テーブルから全件取得
